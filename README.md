@@ -1,5 +1,4 @@
 This project webscrapes reddit to get you accurate results(or at least real life experiences) with products you are interested in. NLP focused
 
-
-Uploading Screen Recording 2025-04-23 at 1.29.44 PM.mov…
+https://github.com/user-attachments/assets/aa4a8031-031a-4698-a247-62c6751382c5
 
