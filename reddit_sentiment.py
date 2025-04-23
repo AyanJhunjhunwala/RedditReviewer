@@ -1,106 +1,150 @@
+import threading
 import requests
-import json
 from datetime import datetime
 from transformers import pipeline
 import matplotlib.pyplot as plt
+import tkinter as tk
+from tkinter import ttk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 def scrape_reddit_topics(search_query):
-    """
-    Scrape Reddit posts and comments based on a search query.
-    Returns a list of dicts with post data and comments.
-    """
+    """Scrape Reddit posts & comments for any search term (topic)."""
     url = f"https://www.reddit.com/search.json?q={search_query}&sort=relevance"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                      'AppleWebKit/537.36 (KHTML, like Gecko) '
-                      'Chrome/123.0.0.0 Safari/537.36'
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/123.0.0.0 Safari/537.36'
+        )
     }
-    try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
-        posts_with_comments = []
-        for post in data['data']['children']:
-            post_data = post['data']
-            comments_url = f"https://www.reddit.com{post_data['permalink']}.json"
-            comments_resp = requests.get(comments_url, headers=headers)
-            comments_data = comments_resp.json()
-            comments = []
-            if len(comments_data) > 1:
-                for comment in comments_data[1]['data']['children']:
-                    cdata = comment['data']
-                    if 'body' in cdata:
-                        comments.append({
-                            'author': cdata.get('author', '[deleted]'),
-                            'body': cdata['body'],
-                            'score': cdata.get('score', 0),
-                            'created_utc': datetime.fromtimestamp(cdata['created_utc']).isoformat()
-                        })
-            posts_with_comments.append({
-                'title': post_data.get('title', ''),
-                'author': post_data.get('author', '[deleted]'),
-                'score': post_data.get('score', 0),
-                'url': post_data.get('url', ''),
-                'created_utc': datetime.fromtimestamp(post_data.get('created_utc', 0)).isoformat(),
-                'num_comments': post_data.get('num_comments', 0),
-                'selftext': post_data.get('selftext', ''),
-                'comments': comments
-            })
-        return posts_with_comments
-    except Exception as e:
-        print(f"Error occurred: {e}")
-        return None
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()
 
-def extract_posts_and_comments(json_obj):
-    """Extract text content from posts and comments."""
+    posts_with_comments = []
+    for post in data['data']['children']:
+        pd = post['data']
+        cu = datetime.fromtimestamp(pd.get('created_utc', 0)).isoformat()
+        comments_url = f"https://www.reddit.com{pd['permalink']}.json"
+        cr = requests.get(comments_url, headers=headers)
+        cr.raise_for_status()
+        cdata = cr.json()
+        comments = []
+        if len(cdata) > 1:
+            for com in cdata[1]['data']['children']:
+                d = com['data']
+                if 'body' in d:
+                    comments.append({
+                        'author': d.get('author', '[deleted]'),
+                        'body':   d['body'],
+                        'score':  d.get('score', 0),
+                        'created_utc': datetime.fromtimestamp(d['created_utc']).isoformat()
+                    })
+        posts_with_comments.append({
+            'title':        pd.get('title', ''),
+            'author':       pd.get('author', '[deleted]'),
+            'score':        pd.get('score', 0),
+            'url':          pd.get('url', ''),
+            'created_utc':  cu,
+            'num_comments': pd.get('num_comments', 0),
+            'selftext':     pd.get('selftext', ''),
+            'comments':     comments
+        })
+    return posts_with_comments
+
+def extract_posts_and_comments(data):
+    """Flatten all post selftexts and comment bodies into a list of strings."""
     texts = []
-    for entry in json_obj:
-        if entry.get('selftext'):
-            texts.append(entry['selftext'])
-        for comment in entry.get('comments', []):
-            if comment.get('body'):
-                texts.append(comment['body'])
+    for e in data:
+        if e.get('selftext'):
+            texts.append(e['selftext'])
+        for c in e.get('comments', []):
+            if c.get('body'):
+                texts.append(c['body'])
     return texts
 
 def analyze_sentiment(texts):
-    """Perform sentiment analysis on a list of texts."""
-    classifier = pipeline('sentiment-analysis', model='tabularisai/multilingual-sentiment-analysis')
-    labels = []
-    for text in texts:
-        truncated = text[:512]
-        result = classifier(truncated)[0]['label']
-        labels.append(result)
-    counts = {
-        'Very Positive': 0,
-        'Positive': 0,
-        'Neutral': 0,
-        'Negative': 0,
-        'Very Negative': 0
-    }
-    for label in labels:
-        if label in counts:
-            counts[label] += 1
+    """Run the sentiment pipeline and count labels."""
+    clf = pipeline(
+        'sentiment-analysis',
+        model='tabularisai/multilingual-sentiment-analysis'
+    )
+    counts = {k: 0 for k in (
+        'Very Positive', 'Positive', 'Neutral', 'Negative', 'Very Negative'
+    )}
+    for t in texts:
+        lbl = clf(t[:512])[0]['label']
+        if lbl in counts:
+            counts[lbl] += 1
     return counts
 
 def plot_sentiment(counts):
-    """Generate a pie chart for sentiment counts."""
+    """Return a Matplotlib Figure for the sentiment pie chart."""
     labels = list(counts.keys())
-    sizes = [counts[key] for key in labels]
+    sizes  = [counts[l] for l in labels]
     colors = ['#ff9999', '#66b3ff', '#99ff99', '#ffcc99', '#c2c2f0']
     fig, ax = plt.subplots()
-    ax.pie(sizes, colors=colors, labels=labels, autopct='%1.1f%%', startangle=90)
+    ax.pie(sizes, colors=colors, labels=labels,
+           autopct='%1.1f%%', startangle=90)
     ax.axis('equal')
-    plt.title('Sentiment Analysis of Reddit Posts and Comments')
+    ax.set_title('Sentiment Analysis of Reddit Search Results')
     return fig
 
-if __name__ == '__main__':
-    import sys
-    if len(sys.argv) > 1:
-        subreddit = sys.argv[1]
-    else:
-        subreddit = input("Enter subreddit to scrape: ")
-    results = scrape_reddit_topics(subreddit)
-    if results:
-        texts = extract_posts_and_comments(results)
-        counts = analyze_sentiment(texts)
-        fig = plot_sentiment(counts)
-        plt.show()
+class RedditSentimentApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Reddit Sentiment Analyzer")
+        self.geometry("800x600")
+        self._build_ui()
+
+    def _build_ui(self):
+        frm = ttk.Frame(self); frm.pack(pady=10)
+        ttk.Label(frm, text="Topic:").grid(row=0, column=0, padx=5)
+        self.entry = ttk.Entry(frm, width=30); self.entry.grid(row=0, column=1)
+        ttk.Button(frm, text="Analyze", command=self._on_click).grid(
+            row=0, column=2, padx=5
+        )
+        self.chart_frame = ttk.Frame(self)
+        self.chart_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _on_click(self):
+        for w in self.chart_frame.winfo_children():
+            w.destroy()
+        ttk.Label(self.chart_frame, text="Loading…").pack(pady=20)
+        threading.Thread(target=self._fetch_and_count, daemon=True).start()
+
+    def _fetch_and_count(self):
+        topic = self.entry.get().strip()
+        if not topic:
+            self.after(0, self._show_error, "Please enter a topic.")
+            return
+
+        try:
+            data   = scrape_reddit_topics(topic)
+            if not data:
+                raise RuntimeError("No results returned.")
+            texts  = extract_posts_and_comments(data)
+            counts = analyze_sentiment(texts)
+            # schedule plot creation on main thread
+            self.after(0, self._show_plot, counts)
+        except Exception as e:
+            self.after(0, self._show_error, str(e))
+
+    def _show_plot(self, counts):
+        for w in self.chart_frame.winfo_children():
+            w.destroy()
+        fig    = plot_sentiment(counts)
+        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _show_error(self, msg):
+        for w in self.chart_frame.winfo_children():
+            w.destroy()
+        ttk.Label(
+            self.chart_frame, text=f"Error: {msg}", foreground="red"
+        ).pack(pady=20)
+
+if __name__ == "__main__":
+    app = RedditSentimentApp()
+    app.mainloop()
